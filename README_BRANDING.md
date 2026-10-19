@@ -1,0 +1,1 @@
+Branding update: Trader Architecture Ledger replaces TradeLedger in public landing page, login, workspace, email invitation copy, and metadata. Footer credits Jujare Tech Advisors LLP and links to https://www.jujaretechadvisors.com. No database migration required.

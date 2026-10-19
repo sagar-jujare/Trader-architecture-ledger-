@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+enum Role {
+  ADMIN
+  TRADER
+}
+enum UserStatus {
+  INVITED
+  PENDING_PAYMENT
+  PENDING_REVIEW
+  ACTIVE
+  SUSPENDED
+}
+enum PaymentMethod {
+  UPI
+  BANK_TRANSFER
+  CASHFREE_LINK
+}
+enum PaymentStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  phone String?
+  name String?
+  passwordHash String?
+  role Role @default(TRADER)
+  status UserStatus @default(INVITED)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  invites Invitation[]
+  payments Payment[]
+  subscriptions Subscription[]
+  sessions Session[]
+  auditActions AuditLog[] @relation("AuditActor")
+  onboarding OnboardingProfile?
+  trades Trade[]
+  ledgerSettings LedgerSettings?
+  ledgerDays LedgerDay[]
+}
+model Invitation {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+}
+model Session {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId,expiresAt])
+}
+model Payment {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId],references:[id])
+  method PaymentMethod
+  reference String
+  amountPaise Int
+  note String?
+  status PaymentStatus @default(SUBMITTED)
+  reviewedById String?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId,status])
+}
+model Subscription {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId],references:[id])
+  paymentId String @unique
+  planName String
+  status SubscriptionStatus @default(ACTIVE)
+  startsAt DateTime
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId,status,expiresAt])
+}
+model AuditLog {
+  id String @id @default(cuid())
+  actorId String
+  actor User @relation("AuditActor",fields:[actorId],references:[id])
+  action String
+  targetUserId String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+
+// Phase 3: trader onboarding and journal
+model OnboardingProfile {
+  id String @id @default(cuid())
+  userId String @unique
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market String
+  experience String
+  broker String?
+  startingBalance Decimal @db.Decimal(18, 2)
+  dailyTargetPct Decimal @db.Decimal(7, 3)
+  dailyMaxLossPct Decimal @db.Decimal(7, 3)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Trade {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradedAt DateTime
+  symbol String
+  side TradeSide
+  quantity Decimal @db.Decimal(18, 4)
+  entryPrice Decimal @db.Decimal(18, 4)
+  exitPrice Decimal @db.Decimal(18, 4)
+  fees Decimal @default(0) @db.Decimal(18, 2)
+  notes String?
+  createdAt DateTime @default(now())
+  @@index([userId, tradedAt])
+}
+
+enum TradeSide {
+  LONG
+  SHORT
+}
+
+// Each trader owns their own configurable ledger and daily rows.
+model LedgerSettings {
+  id String @id @default(cuid())
+  userId String @unique
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  startingCapital Decimal @db.Decimal(18,2)
+  tradingDays Int @default(220)
+  targetPct Decimal @db.Decimal(7,3)
+  maxLossPct Decimal @db.Decimal(7,3)
+  riskPct Decimal @db.Decimal(7,3)
+  startDate DateTime @db.Date
+  holidayDates String @default("") @db.Text
+  updatedAt DateTime @updatedAt
+}
+model LedgerDay {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  dayNumber Int
+  date DateTime @db.Date
+  grossProfit Decimal @default(0) @db.Decimal(18,2)
+  grossLoss Decimal @default(0) @db.Decimal(18,2)
+  charges Decimal @default(0) @db.Decimal(18,2)
+  deposit Decimal @default(0) @db.Decimal(18,2)
+  withdrawal Decimal @default(0) @db.Decimal(18,2)
+  tradesTaken Int @default(0)
+  notes String?
+  updatedAt DateTime @updatedAt
+  @@unique([userId,dayNumber])
+  @@index([userId,date])
+}

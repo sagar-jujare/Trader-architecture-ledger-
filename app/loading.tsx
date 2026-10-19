@@ -1,0 +1,1 @@
+export default function Loading(){return <div className="page-loading" role="status" aria-live="polite"><span className="loading-spinner loading-spinner-lg"/><div><strong>Loading your trading workspace</strong><p>Please wait…</p></div></div>}
