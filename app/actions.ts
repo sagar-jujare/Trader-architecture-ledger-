@@ -34,9 +34,9 @@ export async function acceptInvite(form:FormData){
 export async function inviteUser(form:FormData){
  const admin=await requireAdmin();
  const parsed=z.object({email:z.email(),name:z.string().min(1).max(100),phone:z.string().regex(/^\+?[0-9 ()-]{7,20}$/)}).safeParse({email:val(form,'email').toLowerCase(),name:val(form,'name'),phone:val(form,'phone')});
- if(!parsed.success) fail('/admin','Invalid email or name');
+ if(!parsed.success) fail('/admin/invitations','Invalid email or name');
  const exists=await db.user.findUnique({where:{email:parsed.data.email}});
- if(exists) fail('/admin','User already exists');
+ if(exists) fail('/admin/invitations','User already exists');
  const token=newToken();
  await db.user.create({data:{email:parsed.data.email,name:parsed.data.name,phone:parsed.data.phone,status:'INVITED',invites:{create:{tokenHash:hashToken(token),expiresAt:new Date(Date.now()+48*60*60*1000)}}}});
  await db.auditLog.create({data:{actorId:admin.id,action:'USER_INVITED',metadata:{email:parsed.data.email}}});
@@ -45,24 +45,24 @@ export async function inviteUser(form:FormData){
  const delivery=await sendInvitation({email:parsed.data.email,name:parsed.data.name,phone:parsed.data.phone,link});
  const params=new URLSearchParams({invite:link,inviteName:parsed.data.name,invitePhone:parsed.data.phone,emailDelivery:delivery.email,whatsappDelivery:delivery.whatsapp});
  if(delivery.notes.length) params.set('deliveryError',delivery.notes.join(' | ').slice(0,500));
- redirect('/admin?'+params.toString());
+ redirect('/admin/invitations?'+params.toString());
 }
 export async function submitPayment(form:FormData){
  const u=await requireUser(); if(u.role!=='TRADER') fail('/dashboard','Not a trader');
  if(await hasActiveAccess(u.id)) fail('/dashboard','Already active');
  if(u.status==='SUSPENDED') fail('/dashboard','Account suspended');
- const method=val(form,'method'); const reference=val(form,'reference'); const amount=Number(val(form,'amount'));
- if(!['BANK_TRANSFER','CASHFREE_LINK'].includes(method)||reference.length<6||reference.length>120||!Number.isSafeInteger(amount)||amount<1||amount>100000000) fail('/dashboard','Invalid payment details');
+ const method=val(form,'method'); const reference=val(form,'reference'); const amount=Number(val(form,'amount')); const payerName=val(form,'payerName'); const payerPhone=val(form,'payerPhone');
+ if(!['UPI','BANK_TRANSFER'].includes(method)||payerName.length<2||payerName.length>100||!/^[+0-9 ()-]{7,20}$/.test(payerPhone)||reference.length<6||reference.length>120||!Number.isSafeInteger(amount)||amount<1||amount>100000000) fail('/dashboard','Invalid payment details');
  const pending=await db.payment.count({where:{userId:u.id,status:'SUBMITTED'}});
  if(pending) fail('/dashboard','Payment already awaiting review');
- await db.$transaction([db.payment.create({data:{userId:u.id,method:method as 'BANK_TRANSFER'|'CASHFREE_LINK',reference,amountPaise:amount*100,note:val(form,'note').slice(0,500)}}),db.user.update({where:{id:u.id},data:{status:'PENDING_REVIEW'}})]);
+ await db.$transaction([db.payment.create({data:{userId:u.id,method:method as 'BANK_TRANSFER'|'UPI',reference,amountPaise:amount*100,note:('Payer: '+payerName+' | Phone: '+payerPhone+' | '+val(form,'note')).slice(0,500)}}),db.user.update({where:{id:u.id},data:{status:'PENDING_REVIEW'}})]);
  revalidatePath('/dashboard');redirect('/dashboard?success=Payment+submitted+for+manual+verification');
 }
 export async function reviewPayment(form:FormData){
  const admin=await requireAdmin(); const id=val(form,'paymentId');const decision=val(form,'decision');
- if(!['APPROVED','REJECTED'].includes(decision)) fail('/admin','Invalid decision');
+ if(!['APPROVED','REJECTED'].includes(decision)) fail('/admin/payments','Invalid decision');
  const days=Number(val(form,'days'));
- if(decision==='APPROVED'&&(!Number.isInteger(days)||days<1||days>3650)) fail('/admin','Invalid subscription duration');
+ if(decision==='APPROVED'&&(!Number.isInteger(days)||days<1||days>3650)) fail('/admin/payments','Invalid subscription duration');
  await db.$transaction(async tx=>{
   const updated=await tx.payment.updateMany({where:{id,status:'SUBMITTED'},data:{status:decision as 'APPROVED'|'REJECTED',reviewedById:admin.id,reviewedAt:new Date()}});
   if(updated.count!==1) throw new Error('Payment already reviewed');
@@ -70,7 +70,7 @@ export async function reviewPayment(form:FormData){
   if(decision==='APPROVED'){
    const now=new Date();
    await tx.subscription.updateMany({where:{userId:payment.userId,status:'ACTIVE'},data:{status:'REVOKED'}});
-   await tx.subscription.create({data:{userId:payment.userId,paymentId:id,planName:'Manual plan',startsAt:now,expiresAt:new Date(now.getTime()+days*86400000)}});
+   await tx.subscription.create({data:{userId:payment.userId,paymentId:id,planName:days>=365?'1 Year':'1 Month',startsAt:now,expiresAt:new Date(now.getTime()+days*86400000)}});
    await tx.user.update({where:{id:payment.userId},data:{status:'ACTIVE'}});
   }else{
    const active=await tx.subscription.count({where:{userId:payment.userId,status:'ACTIVE',expiresAt:{gt:new Date()}}});
@@ -78,7 +78,7 @@ export async function reviewPayment(form:FormData){
   }
   await tx.auditLog.create({data:{actorId:admin.id,action:'PAYMENT_'+decision,targetUserId:payment.userId,metadata:{paymentId:id,days:decision==='APPROVED'?days:null}}});
  });
- revalidatePath('/admin');redirect('/admin?success=Payment+reviewed');
+ revalidatePath('/admin');revalidatePath('/admin/payments');revalidatePath('/admin/renewals');redirect('/admin/payments?success=Payment+reviewed');
 }
 export async function changeAccess(form:FormData){
  const admin=await requireAdmin(); const userId=val(form,'userId');const action=val(form,'action');
